@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     # ── EOL Alert ────────────────────────────────────────────
     EOL_ALERT_THRESHOLD_YEARS: int = 2
 
+    # ── AI Provider ──────────────────────────────────────────
+    AI_PROVIDER: str = "gemini"           # gemini | openai | anthropic | ollama
+    AI_API_KEY: str = ""                  # Loaded from .env, NEVER exposed to frontend
+    AI_MODEL: str = "gemini-3.6-flash"    # Model identifier for the chosen provider
+    AI_MAX_CANDIDATES: int = 10           # Max candidates sent to the AI for analysis
+    AI_TIMEOUT_SECONDS: int = 30          # Timeout for AI API calls
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

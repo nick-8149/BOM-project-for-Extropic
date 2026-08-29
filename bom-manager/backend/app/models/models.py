@@ -215,9 +215,23 @@ class ReplacementCandidate(Base):
     reason = Column(String)
     confidence_score = Column(Float, default=0.0) # 0-100%
     replacement_notes = Column(String)
-    action_taken = Column(String) # Accept / Reject / Manual Review
+    action_taken = Column(String) # Accept / Reject / Manual Review / Suggested
     reviewed_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # --- AI Analysis Fields ---
+    ai_score = Column(Float, nullable=True)
+    ai_confidence = Column(String, nullable=True)        # high/medium/low
+    ai_summary = Column(String, nullable=True)
+    ai_reasoning = Column(String, nullable=True)
+    ai_warnings = Column(JSON, nullable=True)            # list[str]
+    ai_missing_data = Column(JSON, nullable=True)         # list[str]
+    ai_validation_required = Column(JSON, nullable=True)  # list[str]
+    ai_compatibility = Column(JSON, nullable=True)        # dict of details
+    analysis_model = Column(String, nullable=True)        # e.g. gemini-2.0-flash
+    analysis_timestamp = Column(DateTime, nullable=True)
+    review_comments = Column(String, nullable=True)       # Engineer's comments
+    review_timestamp = Column(DateTime, nullable=True)
 
     original_part = relationship("Part", foreign_keys=[original_part_id])
     replacement_part = relationship("Part", foreign_keys=[replacement_part_id])

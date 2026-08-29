@@ -15,7 +15,8 @@ import {
   UserCheck,
   ChevronLeft,
   ChevronRight,
-  LogOut as LogOutIcon
+  LogOut as LogOutIcon,
+  Brain
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -53,6 +54,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         { name: 'EOL Forecasts', path: '/lifecycle', icon: ShieldAlert },
         { name: 'RoHS Compliance', path: '/compliance', icon: FileText },
         { name: 'Alternatives Suggestion', path: '/replacements', icon: Settings },
+        { name: 'AI Smart Replacement Engine', path: '/ai-replacements', icon: Brain },
       ]
     },
     {

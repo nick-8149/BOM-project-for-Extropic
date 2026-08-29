@@ -10,6 +10,7 @@ import BOMResultsPage from './pages/BOMResultsPage';
 import LifecyclePage from './pages/LifecyclePage';
 import CompliancePage from './pages/CompliancePage';
 import ReplacementsPage from './pages/ReplacementsPage';
+import AIReplacementsPage from './pages/AIReplacementsPage';
 import ReportsPage from './pages/ReportsPage';
 import AlertsPage from './pages/AlertsPage';
 import AdminPage from './pages/AdminPage';
@@ -49,6 +50,7 @@ function ProtectedRoutes() {
         <Route path="/lifecycle" element={<LifecyclePage />} />
         <Route path="/compliance" element={<CompliancePage />} />
         <Route path="/replacements" element={<ReplacementsPage />} />
+        <Route path="/ai-replacements" element={<AIReplacementsPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/admin" element={<AdminPage />} />

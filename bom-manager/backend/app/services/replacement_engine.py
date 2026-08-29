@@ -75,3 +75,53 @@ async def find_replacement_candidates(
     # Sort candidates by similarity score descending
     candidates.sort(key=lambda x: x["confidence_score"], reverse=True)
     return candidates
+
+
+async def find_ai_candidates(
+    part_id: str,
+    db: AsyncSession
+) -> List[Dict[str, Any]]:
+    """
+    Enhanced candidate retrieval for AI analysis.
+    Unlike standard retrieval, this does NOT filter out Obsolete or Non-RoHS parts.
+    It retrieves similar parts and lets the AI determine the compatibility risks.
+    """
+    from app.config import settings
+
+    candidates = []
+
+    # 1. Fetch original part details
+    original_result = await db.execute(select(Part).where(Part.id == part_id))
+    orig_part = original_result.scalars().first()
+    if not orig_part:
+        return []
+
+    # 2. Query potential candidates in same category (fallback to all if no category)
+    query = select(Part).where(Part.id != part_id)
+    if orig_part.category:
+        query = query.where(Part.category == orig_part.category)
+        
+    # We don't strictly filter by package type here; we let RapidFuzz rank them
+    # and the AI evaluate package differences.
+    potential_result = await db.execute(query)
+    potentials = potential_result.scalars().all()
+
+    for p in potentials:
+        # Calculate descriptive similarity as base confidence score
+        desc_score = fuzz.token_sort_ratio(orig_part.description or "", p.description or "")
+        pn_score = fuzz.ratio(orig_part.part_number, p.part_number)
+        
+        # Blended score (description is more important for functionality, PN for series)
+        combined_score = (desc_score * 0.7) + (pn_score * 0.3)
+
+        candidates.append({
+            "replacement_part_id": p.id,
+            "replacement_part_number": p.part_number,
+            "confidence_score": float(combined_score),
+        })
+
+    # Sort candidates by similarity score descending
+    candidates.sort(key=lambda x: x["confidence_score"], reverse=True)
+    
+    # Return top N candidates (default 10) to avoid overloading AI prompt context
+    return candidates[:settings.AI_MAX_CANDIDATES]
