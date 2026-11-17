@@ -13,6 +13,8 @@ interface Part {
     lifecycle_status: string;
     eol_date: string | null;
     years_to_eol: number | null;
+    provider?: string;
+    lookup_status?: string;
   } | null;
 }
 
@@ -138,7 +140,7 @@ export default function LifecyclePage() {
                       </span>
                     </td>
                     <td className="py-3.5">
-                      <LifecycleBadge status={p.lifecycle_info?.lifecycle_status || 'Unknown'} />
+                      <LifecycleBadge status={p.lifecycle_info?.lifecycle_status || 'Unknown'} source={p.lifecycle_info?.provider} lookup_status={p.lifecycle_info?.lookup_status} />
                     </td>
                     <td className="py-3.5">
                       {p.lifecycle_info?.years_to_eol !== null && p.lifecycle_info?.years_to_eol !== undefined ? (

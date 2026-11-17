@@ -43,6 +43,8 @@ interface LifecycleInfo {
   years_to_eol: number | null;
   last_verified: string;
   source: string;
+  provider?: string;
+  lookup_status?: string;
 }
 
 interface ComplianceInfo {
@@ -130,7 +132,7 @@ export default function PartDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2.5 md:self-start shrink-0">
-            {part.lifecycle_info && <LifecycleBadge status={part.lifecycle_info.lifecycle_status} />}
+            {part.lifecycle_info && <LifecycleBadge status={part.lifecycle_info.lifecycle_status} source={part.lifecycle_info.provider} lookup_status={part.lifecycle_info.lookup_status} />}
             {part.compliance_info && <RoHSBadge status={part.compliance_info.rohs_status} />}
           </div>
         </div>

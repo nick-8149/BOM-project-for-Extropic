@@ -4,7 +4,15 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 
 from app.models.models import BOMItem, Part, RiskAssessment, LifecycleInfo, ComplianceInfo, PartSupplier
+from app.models.lifecycle import PartIdentityLifecycle
 from app.config import settings
+
+# ── STEP 44 INTEGRATION ──────────────────────────────────────────────────────
+# The risk engine prioritizes verified lifecycle data from PartIdentityLifecycle
+# (genuine Nexar records). If real verified data is unavailable, it falls back
+# to global catalog seed/demo data or standard baseline defaults, explicitly
+# recording data provenance in the assessment notes.
+# ──────────────────────────────────────────────────────────────────────────────
 
 async def calculate_bom_item_risk(
     item: BOMItem,
@@ -13,6 +21,7 @@ async def calculate_bom_item_risk(
     """
     Computes a weighted risk score (0-100) and risk level (Low, Medium, High)
     for a given matched BOM item.
+    Prioritizes verified PartIdentityLifecycle (Nexar) over seed/demo LifecycleInfo.
     """
     lifecycle_risk = 0.0
     eol_risk = 0.0
@@ -23,8 +32,18 @@ async def calculate_bom_item_risk(
     # 1. Match Confidence Risk (100 - match confidence score)
     match_confidence_risk = max(0.0, 100.0 - item.confidence_score)
 
+    # 1.5 Check PartIdentityLifecycle for verified real Nexar record
+    pil_record = None
+    if item.original_part_number:
+        pil_res = await db.execute(
+            select(PartIdentityLifecycle).where(
+                PartIdentityLifecycle.internal_part_number == item.original_part_number
+            )
+        )
+        pil_record = pil_res.scalars().first()
+
+    part = None
     if item.matched_part_id:
-        # Load part relations
         result = await db.execute(
             select(Part)
             .options(
@@ -36,65 +55,90 @@ async def calculate_bom_item_risk(
         )
         part = result.scalars().first()
 
-        if part:
-            # 2. Lifecycle Status Risk
-            if part.lifecycle_info:
-                status = part.lifecycle_info.lifecycle_status.upper()
-                if status == "OBSOLETE":
-                    lifecycle_risk = 100.0
-                elif status == "DEPRECATED":
-                    lifecycle_risk = 80.0
-                elif status == "NRND":
-                    lifecycle_risk = 60.0
-                elif status == "ACTIVE":
-                    lifecycle_risk = 0.0
+    # Determine Lifecycle Source and Status
+    lifecycle_source = "unknown"
+    lifecycle_status = None
+    years_to_eol = None
+    has_real_lifecycle = False
 
-                # 3. EOL Proximity Risk (Alert if EOL < threshold)
-                years = part.lifecycle_info.years_to_eol
-                if years is not None:
-                    if years <= 0:
-                        eol_risk = 100.0
-                    elif years <= settings.EOL_ALERT_THRESHOLD_YEARS:
-                        # Scale risk linearly up to 100 as years approach 0
-                        eol_risk = 50.0 + (50.0 * (1.0 - (years / settings.EOL_ALERT_THRESHOLD_YEARS)))
-                    else:
-                        eol_risk = 0.0
+    # 1. Genuine external lifecycle data from PartIdentityLifecycle takes absolute priority
+    if pil_record and pil_record.provider == "nexar" and pil_record.lookup_status == "SUCCESS" and pil_record.verification_status == "VERIFIED":
+        lifecycle_source = "nexar"
+        lifecycle_status = pil_record.lifecycle_status
+        has_real_lifecycle = True
+        if pil_record.end_of_life_date:
+            years_to_eol = (pil_record.end_of_life_date.date() - date.today()).days / 365.25
+    elif part and part.lifecycle_info and part.lifecycle_info.lifecycle_status:
+        # STEP 49 INTEGRITY ENFORCEMENT:
+        # Seed/demo lifecycle data from the reference catalog must NOT be treated as
+        # genuine lifecycle evidence for a production BOM item merely because fuzzy matching
+        # attached a catalog part. The BOM item's genuine lifecycle remains unverified/unknown.
+        lifecycle_source = "catalog_seed_unverified"
+        lifecycle_status = None
+        years_to_eol = None
+        has_real_lifecycle = False
+
+    # 2. Lifecycle Status & EOL Risk
+    if lifecycle_status and has_real_lifecycle:
+        status = lifecycle_status.upper()
+        if status == "OBSOLETE":
+            lifecycle_risk = 100.0
+        elif status == "DEPRECATED":
+            lifecycle_risk = 80.0
+        elif status == "NRND":
+            lifecycle_risk = 60.0
+        elif status == "ACTIVE":
+            lifecycle_risk = 0.0
+        else:
+            lifecycle_risk = 50.0
+
+        if years_to_eol is not None:
+            if years_to_eol <= 0:
+                eol_risk = 100.0
+            elif years_to_eol <= settings.EOL_ALERT_THRESHOLD_YEARS:
+                eol_risk = 50.0 + (50.0 * (1.0 - (years_to_eol / settings.EOL_ALERT_THRESHOLD_YEARS)))
             else:
-                lifecycle_risk = 50.0 # Unknown
+                eol_risk = 0.0
+        else:
+            eol_risk = 0.0 if status == "ACTIVE" else 50.0
+    else:
+        # Genuine lifecycle evidence is unavailable for this BOM item.
+        # We do NOT treat missing evidence as proof that a component is obsolete (100.0).
+        # We score evidence uncertainty with a moderate baseline (50.0).
+        lifecycle_risk = 50.0
+        eol_risk = 50.0
 
-            # 4. Compliance Risk (RoHS)
-            if part.compliance_info:
-                rohs = part.compliance_info.rohs_status.upper()
-                if "NON-COMPLIANT" in rohs:
-                    compliance_risk = 100.0
-                elif "COMPLIANT" in rohs:
-                    compliance_risk = 0.0
-                else:
-                    compliance_risk = 50.0 # Unknown
+    # 3. Compliance and Supplier Risk
+    if part:
+        # Compliance Risk (RoHS)
+        if part.compliance_info:
+            rohs = part.compliance_info.rohs_status.upper()
+            if "NON-COMPLIANT" in rohs:
+                compliance_risk = 100.0
+            elif "COMPLIANT" in rohs:
+                compliance_risk = 0.0
             else:
                 compliance_risk = 50.0
+        else:
+            compliance_risk = 50.0
 
-            # 5. Supplier Sourcing Risk (Suspicious or suspended channels)
-            if part.suppliers:
-                unauthorized_count = sum(1 for ps in part.suppliers if not ps.supplier.is_authorized)
-                total_suppliers = len(part.suppliers)
-                if unauthorized_count == total_suppliers:
-                    supplier_risk = 90.0 # Only unauthorized sources
-                elif unauthorized_count > 0:
-                    supplier_risk = 50.0 # Mixed sources
-                else:
-                    supplier_risk = 0.0 # All authorized
+        # Supplier Sourcing Risk
+        if part.suppliers:
+            unauthorized_count = sum(1 for ps in part.suppliers if not ps.supplier.is_authorized)
+            total_suppliers = len(part.suppliers)
+            if unauthorized_count == total_suppliers:
+                supplier_risk = 90.0
+            elif unauthorized_count > 0:
+                supplier_risk = 50.0
             else:
-                supplier_risk = 100.0 # No sourcing channels available
-
+                supplier_risk = 0.0
+        else:
+            supplier_risk = 100.0
     else:
-        # Unmatched Item Risk
-        lifecycle_risk = 100.0
-        eol_risk = 100.0
-        supplier_risk = 100.0
         compliance_risk = 50.0
+        supplier_risk = 100.0
 
-    # Weighted Overall Score Formula (Proposed Design Decision)
+    # Weighted Overall Score Formula
     overall_score = (
         lifecycle_risk * 0.25 +
         eol_risk * 0.20 +
@@ -129,7 +173,14 @@ async def calculate_bom_item_risk(
     db_assessment.supplier_risk = round(supplier_risk, 2)
     db_assessment.compliance_risk = round(compliance_risk, 2)
     db_assessment.match_confidence_risk = round(match_confidence_risk, 2)
-    db_assessment.notes = f"Risk computed dynamically on matching resolution."
+
+    if has_real_lifecycle:
+        db_assessment.notes = f"Risk evaluated using verified Nexar lifecycle data."
+    elif lifecycle_source == "seed/demo":
+        db_assessment.notes = f"Real lifecycle data unavailable; using seed/demo catalog baseline."
+    else:
+        db_assessment.notes = f"Real lifecycle data unavailable for this component."
+
     db_assessment.assessed_at = datetime.utcnow()
 
     await db.commit()

@@ -2,7 +2,16 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft, CheckCircle2, AlertTriangle, HelpCircle, XCircle, Search, Layers, ClipboardList } from 'lucide-react';
+import { 
+  ArrowLeft, CheckCircle2, AlertTriangle, HelpCircle, XCircle, Search, Layers, ClipboardList,
+  ShieldCheck, RefreshCw, Database, Lock, Zap, ChevronDown, ChevronUp
+} from 'lucide-react';
+import { 
+  triggerBatchLifecycle, 
+  getLifecycleProviderInfo, 
+  type BatchLifecycleResponse, 
+  type LifecycleProviderInfo 
+} from '../api/identityClient';
 
 interface BOMHeader {
   id: string;
@@ -70,6 +79,34 @@ export default function BOMResultsPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // Lifecycle processing state
+  const [providerInfo, setProviderInfo] = useState<LifecycleProviderInfo | null>(null);
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
+  const [lifecycleResult, setLifecycleResult] = useState<BatchLifecycleResponse | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    getLifecycleProviderInfo(token)
+      .then(setProviderInfo)
+      .catch((e) => console.warn("Provider info fetch warning:", e));
+  }, [token]);
+
+  const handleTriggerLifecycle = async () => {
+    if (!bomId || !token || lifecycleLoading) return;
+    setLifecycleLoading(true);
+    setLifecycleError(null);
+    try {
+      const res = await triggerBatchLifecycle(token, bomId);
+      setLifecycleResult(res);
+    } catch (e: any) {
+      setLifecycleError(e.message || "Failed to execute lifecycle batch processing.");
+    } finally {
+      setLifecycleLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!bomId) return;
@@ -169,6 +206,153 @@ export default function BOMResultsPage() {
             <div className="text-[9px] text-red-500/70 font-bold uppercase tracking-wider">Unmatched</div>
           </div>
         </div>
+      </div>
+
+      {/* Lifecycle Resolution Action & Diagnostics Card */}
+      <div className="glass-panel border border-slate-800/80 rounded-2xl p-6 space-y-5 bg-gradient-to-b from-slate-900/40 to-slate-950/60">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <ShieldCheck className="w-5 h-5 text-blue-400" />
+              <h2 className="text-base font-bold text-white tracking-wide">Component Lifecycle Resolution</h2>
+              {providerInfo && (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border tracking-wider uppercase ${
+                  providerInfo.is_nexar_active 
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                }`}>
+                  Provider: {providerInfo.active_provider.toUpperCase()}
+                  {providerInfo.is_nexar_active && !providerInfo.nexar_configured && ' (Credentials Missing!)'}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
+              Verify component lifecycles for distinct BOM items. The strict identity gatekeeper protects your quota by resolving unmapped IPNs locally, and existing verified records are retrieved from the database with 0 external API calls.
+            </p>
+          </div>
+
+          <button
+            onClick={handleTriggerLifecycle}
+            disabled={lifecycleLoading}
+            className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all shadow-lg ${
+              lifecycleLoading
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-500/20 hover:shadow-blue-500/30 border border-blue-400/30 cursor-pointer'
+            }`}
+          >
+            {lifecycleLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
+                Processing Lifecycles...
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="w-4 h-4 text-blue-200" />
+                Fetch Component Lifecycles
+              </>
+            )}
+          </button>
+        </div>
+
+        {lifecycleError && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs flex items-center gap-2">
+            <XCircle className="w-4 h-4 shrink-0" />
+            <span>{lifecycleError}</span>
+          </div>
+        )}
+
+        {lifecycleResult && (
+          <div className="space-y-4 pt-3 border-t border-slate-800/80 animate-fadeIn">
+            <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                Lifecycle Batch Processing Diagnostics ({lifecycleResult.provider.toUpperCase()})
+              </span>
+              <button 
+                onClick={() => setShowDetails(!showDetails)}
+                className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer font-semibold"
+              >
+                {showDetails ? <>Hide Details <ChevronUp className="w-3.5 h-3.5" /></> : <>View Item Details <ChevronDown className="w-3.5 h-3.5" /></>}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-center">
+                <div className="text-lg font-black text-white">{lifecycleResult.summary.unique_parts}</div>
+                <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Unique Parts</div>
+              </div>
+
+              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 text-center">
+                <div className="text-lg font-black text-emerald-400 flex items-center justify-center gap-1">
+                  <Database className="w-3.5 h-3.5" />
+                  {lifecycleResult.summary.database_hits}
+                </div>
+                <div className="text-[9px] text-emerald-500/80 font-bold uppercase tracking-wider">Database Hits (0 Quota)</div>
+              </div>
+
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 text-center">
+                <div className="text-lg font-black text-amber-400 flex items-center justify-center gap-1">
+                  <Lock className="w-3.5 h-3.5" />
+                  {lifecycleResult.summary.blocked_identities}
+                </div>
+                <div className="text-[9px] text-amber-500/80 font-bold uppercase tracking-wider">Gatekeeper Blocked</div>
+              </div>
+
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 text-center">
+                <div className="text-lg font-black text-blue-400 flex items-center justify-center gap-1">
+                  <Zap className="w-3.5 h-3.5" />
+                  {lifecycleResult.summary.actual_nexar_requests > 0 
+                    ? lifecycleResult.summary.actual_nexar_requests 
+                    : lifecycleResult.summary.mock_results}
+                </div>
+                <div className="text-[9px] text-blue-400/80 font-bold uppercase tracking-wider">
+                  {lifecycleResult.summary.actual_nexar_requests > 0 ? "Nexar API Calls" : "Mock Invocations"}
+                </div>
+              </div>
+
+              <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-3 text-center">
+                <div className="text-lg font-black text-red-400">{lifecycleResult.summary.failed_requests}</div>
+                <div className="text-[9px] text-red-500/80 font-bold uppercase tracking-wider">Failed / No Match</div>
+              </div>
+            </div>
+
+            {showDetails && (
+              <div className="overflow-x-auto max-h-60 rounded-xl border border-slate-800 bg-slate-950/80 p-2 text-xs">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-500 text-[10px] uppercase font-bold">
+                      <th className="py-1.5 px-2">Part Number</th>
+                      <th className="py-1.5 px-2">Manufacturer</th>
+                      <th className="py-1.5 px-2">Execution Type</th>
+                      <th className="py-1.5 px-2">Status</th>
+                      <th className="py-1.5 px-2">Details / Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40 text-[11px] font-mono">
+                    {lifecycleResult.details.map((d, idx) => (
+                      <tr key={idx} className="hover:bg-slate-900/50">
+                        <td className="py-1.5 px-2 text-white font-semibold">{d.part_number}</td>
+                        <td className="py-1.5 px-2 text-slate-400">{d.manufacturer || "—"}</td>
+                        <td className="py-1.5 px-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                            d.execution_type === 'DATABASE_HIT' ? 'bg-emerald-500/20 text-emerald-300' :
+                            d.execution_type === 'BLOCKED_BY_GATEKEEPER' ? 'bg-amber-500/20 text-amber-300' :
+                            d.execution_type === 'ACTUAL_NEXAR_REQUEST' ? 'bg-blue-500/20 text-blue-300' :
+                            'bg-slate-800 text-slate-400'
+                          }`}>
+                            {d.execution_type}
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2 text-slate-300">{d.lookup_status}</td>
+                        <td className="py-1.5 px-2 text-slate-500 truncate max-w-xs">{d.reason || "Success"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* BOM Items Table Card */}

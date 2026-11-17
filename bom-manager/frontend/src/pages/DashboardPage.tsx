@@ -9,7 +9,7 @@ import {
 import { 
   LayoutDashboard, RefreshCw, FileText, Cpu, AlertTriangle, ShieldCheck, 
   Layers, Search, FileSpreadsheet, Truck, BellRing, Settings, 
-  ArrowRight, ShieldAlert, CheckCircle, Info, ExternalLink, HelpCircle, UploadCloud
+  ArrowRight, ShieldAlert, CheckCircle, ExternalLink, HelpCircle, UploadCloud
 } from 'lucide-react';
 
 interface SummaryData {
@@ -28,6 +28,7 @@ interface ComponentRequiringAttention {
   risk_score: number;
   priority: string;
   lifecycle: string;
+  provenance?: string;
   bom_id: string;
   bom_name: string;
 }
@@ -109,12 +110,19 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
 
+  const [intelligentAlerts, setIntelligentAlerts] = useState<any[]>([]);
+
   const fetchDashboardData = async () => {
     setLoading(true);
     setError(null);
     try {
       const overview = await apiRequest<DashboardOverview>('/api/v1/dashboard/overview', { token });
       setData(overview);
+      
+      // Fetch top 5 critical intelligent alerts
+      const alertsData = await apiRequest<any[]>('/api/v1/alerts/?severity=CRITICAL&status=ACTIVE&limit=5', { token });
+      setIntelligentAlerts(alertsData);
+      
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err: any) {
       console.error(err);
@@ -509,15 +517,28 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="py-3">
-                      <span className={`text-[10px] font-bold ${
-                        item.lifecycle.toUpperCase() === 'OBSOLETE' 
-                          ? 'text-red-400' 
-                          : item.lifecycle.toUpperCase() === 'NRND' 
-                          ? 'text-amber-400' 
-                          : 'text-emerald-400'
-                      }`}>
-                        {item.lifecycle}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className={`text-[10px] font-bold ${
+                          !item.lifecycle || ['UNKNOWN', 'UNAVAILABLE', 'NOT AVAILABLE', 'UNRESOLVED', 'NULL'].includes(item.lifecycle.toUpperCase().trim())
+                            ? 'text-slate-400'
+                            : item.lifecycle.toUpperCase() === 'OBSOLETE' 
+                            ? 'text-red-400' 
+                            : item.lifecycle.toUpperCase() === 'NRND' 
+                            ? 'text-amber-400' 
+                            : item.lifecycle.toUpperCase() === 'ACTIVE'
+                            ? 'text-emerald-400'
+                            : 'text-slate-400'
+                        }`}>
+                          {(!item.lifecycle || ['UNKNOWN', 'UNAVAILABLE', 'NOT AVAILABLE', 'UNRESOLVED', 'NULL'].includes(item.lifecycle.toUpperCase().trim())) 
+                            ? 'Unavailable' 
+                            : item.lifecycle}
+                        </span>
+                        {item.provenance && (
+                          <span className="text-[8px] text-slate-500 font-semibold uppercase tracking-wider">
+                            {item.provenance === 'nexar' ? 'Nexar' : item.provenance === 'unresolved' ? 'Unresolved' : item.provenance}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 pr-4 text-right space-x-2">
                       <Link 
@@ -830,35 +851,31 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* SECTION 12 — RECENT ALERTS PCNs */}
-        <div className="glass-panel rounded-2xl p-6 lg:col-span-6 flex flex-col justify-between">
+        {/* SECTION 12 — ACTION REQUIRED (INTELLIGENT ALERTS) */}
+        <div className="glass-panel rounded-2xl p-6 lg:col-span-6 flex flex-col justify-between border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.05)]">
           <div>
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Recent PCN / EOL Warnings
+              <h3 className="text-xs font-bold uppercase tracking-wider text-red-400">
+                Action Required (Critical Alerts)
               </h3>
-              <BellRing className="w-4 h-4 text-red-400" />
+              <BellRing className="w-4 h-4 text-red-500 animate-pulse" />
             </div>
 
-            {!data?.recent_alerts || data.recent_alerts.length === 0 ? (
-              <p className="text-xs text-slate-500 italic py-6 text-center">No new PCN alerts logged.</p>
+            {intelligentAlerts.length === 0 ? (
+              <p className="text-xs text-slate-500 italic py-6 text-center">No critical alerts currently require action.</p>
             ) : (
               <div className="space-y-3.5 my-3">
-                {data.recent_alerts.slice(0, 3).map((alert) => (
-                  <div key={alert.id} className="flex gap-3 p-2.5 rounded bg-slate-950/45 border border-slate-900">
+                {intelligentAlerts.map((alert) => (
+                  <div key={alert.id} className="flex gap-3 p-3 rounded bg-red-950/20 border border-red-900/30">
                     <div className="shrink-0 pt-0.5">
-                      {alert.severity === 'High' ? (
-                        <ShieldAlert className="w-4 h-4 text-red-500" />
-                      ) : (
-                        <Info className="w-4 h-4 text-blue-400" />
-                      )}
+                      <ShieldAlert className="w-4 h-4 text-red-500" />
                     </div>
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex justify-between items-start">
                         <h4 className="text-xs font-extrabold text-white truncate">{alert.title}</h4>
-                        <span className="text-[9px] text-slate-500 font-semibold">{new Date(alert.timestamp).toLocaleDateString()}</span>
+                        <span className="text-[9px] text-slate-500 font-semibold">{new Date(alert.created_at).toLocaleDateString()}</span>
                       </div>
-                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">{alert.description}</p>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">{alert.message}</p>
                     </div>
                   </div>
                 ))}
@@ -868,9 +885,9 @@ export default function DashboardPage() {
 
           <Link 
             to="/alerts" 
-            className="text-xs font-bold text-blue-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 self-start pt-2 group"
+            className="text-xs font-bold text-red-500 hover:text-red-400 transition-colors flex items-center gap-1.5 self-start pt-2 group"
           >
-            <span>View All Alerts</span>
+            <span>Go to Intelligent Alerts Hub</span>
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
           </Link>
         </div>

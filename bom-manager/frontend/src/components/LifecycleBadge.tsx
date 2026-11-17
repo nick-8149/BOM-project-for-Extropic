@@ -1,9 +1,11 @@
 interface LifecycleBadgeProps {
-  status: string;
+  status?: string | null;
+  source?: string | null;
+  lookup_status?: string | null;
 }
 
-export default function LifecycleBadge({ status }: LifecycleBadgeProps) {
-  const normalized = status.toUpperCase();
+export default function LifecycleBadge({ status, source, lookup_status }: LifecycleBadgeProps) {
+  const normalized = (status || '').toUpperCase().trim();
 
   let styles = 'bg-slate-800 text-slate-400 border border-slate-700'; // Default Gray
   
@@ -17,9 +19,28 @@ export default function LifecycleBadge({ status }: LifecycleBadgeProps) {
     styles = 'bg-red-500/10 text-red-400 border border-red-500/20'; // Red
   }
 
+  const isUnavailable = !normalized || 
+    ['NOT AVAILABLE', 'UNKNOWN', 'UNAVAILABLE', 'UNRESOLVED', 'NULL'].includes(normalized) || 
+    lookup_status === 'NOT_AVAILABLE';
+
+  if (isUnavailable) {
+    styles = 'bg-slate-800 text-slate-400 border border-slate-700'; // Gray
+  }
+
+  const displayStatus = isUnavailable 
+    ? (lookup_status === 'NOT_AVAILABLE' ? 'NOT AVAILABLE' : 'UNAVAILABLE') 
+    : status;
+
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${styles}`}>
-      {status}
-    </span>
+    <div className="inline-flex flex-col gap-1 items-start">
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${styles}`}>
+        {displayStatus}
+      </span>
+      {source && (
+        <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider ml-1">
+          {source === 'nexar' ? 'Real Nexar' : source === 'unresolved' ? 'Unresolved' : source === 'mock' ? 'Demo/Mock' : source}
+        </span>
+      )}
+    </div>
   );
 }

@@ -21,7 +21,7 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     boms = relationship("BOM", back_populates="uploader")
-    audit_logs = relationship("AuditLog", back_populates="user")
+    audit_logs = relationship("AuditLog", primaryjoin="User.id==AuditLog.user_id", foreign_keys="AuditLog.user_id", back_populates="user")
 
 
 class Part(Base):
@@ -106,11 +106,35 @@ class LifecycleInfo(Base):
     
     id = Column(String, primary_key=True, default=generate_uuid)
     part_id = Column(String, ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, unique=True)
-    lifecycle_status = Column(String, default="Active") # Active / NRND / Obsolete / Deprecated / Unknown
+
+    # ── Core Lifecycle ───────────────────────────────────────
+    lifecycle_status = Column(String, default="UNKNOWN")  # ACTIVE / NRND / EOL / OBSOLETE / DEPRECATED / UNKNOWN
+
+    # ── EOL / LTB / Last-Ship Dates ──────────────────────────
+    # These MUST come from an official source.  Never generated or estimated.
     eol_date = Column(Date, nullable=True)
+    last_time_buy_date = Column(Date, nullable=True)
+    last_ship_date = Column(Date, nullable=True)
+
+    # ── Computed from eol_date ───────────────────────────────
+    # NULL when eol_date is NULL.  Calculated in the service layer, never random.
     years_to_eol = Column(Float, nullable=True)
-    last_verified = Column(Date, default=datetime.utcnow().date)
-    source = Column(String)
+
+    # ── Provenance & Traceability ────────────────────────────
+    provider = Column(String, nullable=True)           # e.g. "nexar", "siliconexpert", "seed/demo"
+    source = Column(String, nullable=True)             # Human-readable source description
+    source_url = Column(String, nullable=True)         # URL to provider part page / datasheet
+    raw_status = Column(String, nullable=True)         # Exact string returned by the provider
+    raw_response = Column(String, nullable=True)       # Full JSON payload (stored as Text for SQLite)
+
+    # ── Verification & Match Quality ─────────────────────────
+    verification_status = Column(String, default="UNVERIFIED")  # VERIFIED / UNVERIFIED / ESTIMATED / UNKNOWN
+    match_type = Column(String, default="UNKNOWN")              # EXACT_MATCH / CLOSE_MATCH / NO_MATCH / UNKNOWN
+    confidence_score = Column(Float, nullable=True)             # 0.0 – 1.0
+
+    # ── Timestamps ───────────────────────────────────────────
+    last_verified = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     part = relationship("Part", back_populates="lifecycle_info")
@@ -238,6 +262,67 @@ class ReplacementCandidate(Base):
     reviewer = relationship("User")
 
 
+class PartNumberMapping(Base):
+    """Maps an internal part number (IPN) to a true manufacturer part number (MPN)."""
+    __tablename__ = "part_number_mappings"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    internal_part_number = Column(String, nullable=False, index=True, unique=True)
+    manufacturer_id = Column(String, ForeignKey("manufacturers.id", ondelete="SET NULL"), nullable=True)
+    manufacturer_part_number = Column(String, nullable=True)
+    
+    mapping_source = Column(String) # e.g., "ERP_Export", "Manual_Entry"
+    mapping_confidence = Column(Float, default=0.0)
+    
+    verification_status = Column(String, default="DRAFT") # VERIFIED, DRAFT, REJECTED, UNKNOWN
+    verified_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    
+    notes = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    manufacturer = relationship("Manufacturer")
+    verifier = relationship("User")
+
+
+class PartNumberAlias(Base):
+    """Explicitly verified aliases/variants for Part Numbers."""
+    __tablename__ = "part_number_aliases"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    requested_manufacturer = Column(String, nullable=False)
+    requested_mpn = Column(String, nullable=False)
+    returned_manufacturer = Column(String, nullable=False)
+    returned_mpn = Column(String, nullable=False)
+    
+    variant_type = Column(String, nullable=False) # e.g. PACKAGING_VARIANT
+    verification_status = Column(String, default="DRAFT", nullable=False) # DRAFT, VERIFIED, REJECTED
+    evidence = Column(String, nullable=True)
+    verified_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class AliasReviewCandidate(Base):
+    __tablename__ = "alias_review_candidates"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    requested_manufacturer = Column(String, nullable=False)
+    requested_mpn = Column(String, nullable=False)
+    
+    returned_manufacturer = Column(String, nullable=False)
+    returned_mpn = Column(String, nullable=False)
+    
+    proposed_variant_type = Column(String, nullable=True)
+    provider = Column(String, nullable=False)
+    evidence = Column(String, nullable=False)
+    
+    review_status = Column(String, default="PENDING") # PENDING, CONVERTED_TO_DRAFT, REJECTED
+    reviewer = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_at = Column(DateTime, nullable=True)
+
+
 class RiskAssessment(Base):
     __tablename__ = "risk_assessments"
     
@@ -266,7 +351,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(String, primary_key=True, default=generate_uuid)
-    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_id = Column(String, nullable=True) # Relaxed FK to preserve historical/service audit actors
     action = Column(String, nullable=False) # Create, Update, Delete, Upload, Download, Login
     entity_type = Column(String) # BOM, Part, User, etc.
     entity_id = Column(String)
@@ -275,4 +360,62 @@ class AuditLog(Base):
     ip_address = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    user = relationship("User", back_populates="audit_logs")
+    user = relationship("User", foreign_keys=[user_id], primaryjoin="AuditLog.user_id==User.id", back_populates="audit_logs")
+
+
+import enum
+from sqlalchemy import Enum
+
+class AlertSeverity(str, enum.Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+class AlertType(str, enum.Enum):
+    EOL_APPROACHING = "EOL_APPROACHING"
+    EOL_REACHED = "EOL_REACHED"
+    LIFECYCLE_CHANGED = "LIFECYCLE_CHANGED"
+    PCN_RECEIVED = "PCN_RECEIVED"
+    COMPLIANCE_ISSUE = "COMPLIANCE_ISSUE"
+    SUPPLIER_RISK = "SUPPLIER_RISK"
+    HIGH_RISK = "HIGH_RISK"
+    REPLACEMENT_AVAILABLE = "REPLACEMENT_AVAILABLE"
+    BOM_RISK_CHANGED = "BOM_RISK_CHANGED"
+
+class AlertStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED = "RESOLVED"
+    DISMISSED = "DISMISSED"
+
+class Alert(Base):
+    __tablename__ = "alerts"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    alert_type = Column(Enum(AlertType), nullable=False)
+    severity = Column(Enum(AlertSeverity), nullable=False)
+    title = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    
+    # Optional associations
+    part_id = Column(String, ForeignKey("parts.id", ondelete="CASCADE"), nullable=True)
+    bom_id = Column(String, ForeignKey("boms.id", ondelete="CASCADE"), nullable=True)
+    pcn_id = Column(String, ForeignKey("pcns.id", ondelete="CASCADE"), nullable=True)
+    
+    risk_score = Column(Float, nullable=True)
+    
+    status = Column(Enum(AlertStatus), default=AlertStatus.ACTIVE)
+    is_read = Column(Boolean, default=False)
+    
+    dedup_key = Column(String, unique=True, nullable=False, index=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+    
+    metadata_json = Column(JSON, nullable=True)
+    
+    part = relationship("Part")
+    bom = relationship("BOM")
+    pcn = relationship("PCN")

@@ -15,6 +15,7 @@ import ReportsPage from './pages/ReportsPage';
 import AlertsPage from './pages/AlertsPage';
 import AdminPage from './pages/AdminPage';
 import LoginPage from './pages/LoginPage';
+import IdentityResolutionPage from './pages/IdentityResolutionPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 
@@ -43,6 +44,7 @@ function ProtectedRoutes() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/upload" element={<BOMUploadPage />} />
         <Route path="/bom/:bomId" element={<BOMResultsPage />} />
+        <Route path="/identity-resolution" element={<IdentityResolutionPage />} />
         <Route path="/search" element={<PartSearchPage />} />
         <Route path="/parts/:partId" element={<PartDetailPage />} />
         <Route path="/manufacturers" element={<ManufacturersPage />} />

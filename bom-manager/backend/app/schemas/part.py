@@ -36,8 +36,16 @@ class LifecycleInfoOut(BaseModel):
     lifecycle_status: str
     eol_date: Optional[date] = None
     years_to_eol: Optional[float] = None
-    last_verified: date
+    last_time_buy_date: Optional[date] = None
+    last_ship_date: Optional[date] = None
+    last_verified: Optional[datetime] = None
     source: Optional[str] = None
+    source_url: Optional[str] = None
+    provider: Optional[str] = None
+    raw_status: Optional[str] = None
+    verification_status: Optional[str] = None
+    match_type: Optional[str] = None
+    confidence_score: Optional[float] = None
 
     class Config:
         from_attributes = True

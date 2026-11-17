@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     AI_MAX_CANDIDATES: int = 10           # Max candidates sent to the AI for analysis
     AI_TIMEOUT_SECONDS: int = 30          # Timeout for AI API calls
 
+    # ── Nexar Integration ────────────────────────────────────
+    NEXAR_CLIENT_ID: str = ""
+    NEXAR_CLIENT_SECRET: str = ""
+
+    # ── Lifecycle Provider ───────────────────────────────────
+    # Options: "mock" (default for offline dev & tests) | "nexar"
+    LIFECYCLE_PROVIDER: str = "mock"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

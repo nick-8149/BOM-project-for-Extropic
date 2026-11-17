@@ -2,28 +2,30 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
-  UploadCloud, 
+  Upload, 
   Search, 
-  ShieldAlert, 
+  ShieldCheck, 
+  RefreshCw,
   FileText, 
   Settings, 
   LogOut, 
   Building2, 
   Truck, 
   BellRing, 
-  FileSpreadsheet,
+  AlertTriangle,
   UserCheck,
   ChevronLeft,
   ChevronRight,
   LogOut as LogOutIcon,
-  Brain
+  Brain,
+  Fingerprint
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { logout, user } = useAuth();
+  const { logout, user, token } = useAuth();
   const { showToast } = useToast();
 
   // Sidebar collapsible state persisted in localStorage
@@ -40,19 +42,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const sections = [
     {
-      title: 'Operations',
+      title: 'Analytics',
       items: [
         { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { name: 'BOM Ingestion', path: '/upload', icon: UploadCloud },
-        { name: 'Sourcing Reports', path: '/reports', icon: FileSpreadsheet },
+        { name: 'Reports', path: '/reports', icon: FileText },
+        { name: 'Alerts', path: '/alerts', icon: AlertTriangle },
       ]
     },
     {
-      title: 'Lifecycle & Compliance',
+      title: 'Core BOM Management',
       items: [
-        { name: 'Part Catalog Search', path: '/search', icon: Search },
-        { name: 'EOL Forecasts', path: '/lifecycle', icon: ShieldAlert },
-        { name: 'RoHS Compliance', path: '/compliance', icon: FileText },
+        { name: 'Upload BOM', path: '/upload', icon: Upload },
+        { name: 'Search Parts', path: '/search', icon: Search },
+        { name: 'Identity Resolution', path: '/identity-resolution', icon: Fingerprint },
+        { name: 'Lifecycle & Supply', path: '/lifecycle', icon: RefreshCw },
+        { name: 'Compliance', path: '/compliance', icon: ShieldCheck },
         { name: 'Alternatives Suggestion', path: '/replacements', icon: Settings },
         { name: 'AI Smart Replacement Engine', path: '/ai-replacements', icon: Brain },
       ]
@@ -62,12 +66,34 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       items: [
         { name: 'Manufacturers', path: '/manufacturers', icon: Building2 },
         { name: 'Suppliers', path: '/suppliers', icon: Truck },
-        { name: 'PCN Alerts', path: '/alerts', icon: BellRing },
+        { name: 'Intelligent Alerts', path: '/alerts', icon: BellRing, badge: true },
       ]
     }
   ];
 
   const showAdmin = user?.role === 'admin';
+
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
+
+  useEffect(() => {
+    if (user) {
+      fetchUnreadCount();
+      // Listen for custom events triggered by the alerts page to refresh count
+      const handleUpdate = () => fetchUnreadCount();
+      window.addEventListener('alerts-updated', handleUpdate);
+      return () => window.removeEventListener('alerts-updated', handleUpdate);
+    }
+  }, [user]);
+
+  const fetchUnreadCount = async () => {
+    try {
+      const { apiRequest } = await import('../api/client');
+      const data = await apiRequest<{ unread_count: number }>('/api/v1/alerts/unread', { token });
+      setUnreadAlerts(data.unread_count);
+    } catch (e) {
+      console.error("Failed to fetch unread alerts count");
+    }
+  };
 
   const handleConfirmSignOut = () => {
     setShowSignOutConfirm(false);
@@ -135,8 +161,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         {isActive && !isCollapsed && (
                           <span className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-white rounded-r" />
                         )}
-                        <Icon className="w-4 h-4 shrink-0" />
-                        {!isCollapsed && <span className="animate-fadeIn">{item.name}</span>}
+                        <div className="relative">
+                          <Icon className="w-4 h-4 shrink-0" />
+                          {/* Badge overlay */}
+                          {('badge' in item && item.badge) && unreadAlerts > 0 && isCollapsed && (
+                            <span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-red-500 rounded-full border border-slate-900" />
+                          )}
+                        </div>
+                        {!isCollapsed && (
+                          <span className="animate-fadeIn flex-1 flex items-center justify-between">
+                            {item.name}
+                            {('badge' in item && item.badge) && unreadAlerts > 0 && (
+                              <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md leading-none">
+                                {unreadAlerts > 99 ? '99+' : unreadAlerts}
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </Link>
                     );
                   })}

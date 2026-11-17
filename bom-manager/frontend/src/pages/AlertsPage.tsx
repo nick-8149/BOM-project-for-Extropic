@@ -1,266 +1,285 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { Bell, Plus, Calendar, AlertTriangle, FileText } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Bell, AlertTriangle, ShieldAlert, AlertCircle, Info, CheckCircle2, Bot, BrainCircuit, X, Search, FileText } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 
-interface PCN {
+interface Alert {
   id: string;
-  part_id: string;
-  pcn_number: string;
-  change_type: string;
-  description: string;
-  effective_date: string;
+  alert_type: string;
+  severity: string;
+  title: string;
+  message: string;
+  part_id: string | null;
+  bom_id: string | null;
+  pcn_id: string | null;
+  risk_score: number | null;
   status: string;
-  document_link: string | null;
+  is_read: boolean;
   created_at: string;
-}
-
-interface Part {
-  id: string;
-  part_number: string;
+  metadata: any;
 }
 
 export default function AlertsPage() {
   const { token } = useAuth();
-  const [pcns, setPcns] = useState<PCN[]>([]);
-  const [parts, setParts] = useState<Part[]>([]);
+  const navigate = useNavigate();
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Form state
-  const [partId, setPartId] = useState('');
-  const [pcnNumber, setPcnNumber] = useState('');
-  const [changeType, setChangeType] = useState('End of Life');
-  const [description, setDescription] = useState('');
-  const [effectiveDate, setEffectiveDate] = useState('');
-  const [docLink, setDocLink] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  const [running, setRunning] = useState(false);
+  
+  // Filters
+  const [statusFilter, setStatusFilter] = useState<'ACTIVE' | 'RESOLVED' | 'ALL'>('ACTIVE');
+  const [severityFilter, setSeverityFilter] = useState<string>('ALL');
 
   useEffect(() => {
-    Promise.all([
-      apiRequest<PCN[]>('/api/v1/pcn/pcn', { token }),
-      apiRequest<Part[]>('/api/v1/parts', { token })
-    ])
-      .then(([pcnData, partsData]) => {
-        setPcns(pcnData);
-        setParts(partsData);
-        if (partsData.length > 0) setPartId(partsData[0].id);
-      })
-      .finally(() => setLoading(false));
-  }, [token]);
+    fetchAlerts();
+  }, [statusFilter, severityFilter]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAdding(true);
+  const fetchAlerts = async () => {
+    setLoading(true);
     try {
-      const newPcn = await apiRequest<PCN>('/api/v1/pcn/pcn', {
-        method: 'POST',
-        token,
-        body: {
-          part_id: partId,
-          pcn_number: pcnNumber,
-          change_type: changeType,
-          description,
-          effective_date: effectiveDate,
-          document_link: docLink || null
-        }
-      });
-      setPcns((prev) => [newPcn, ...prev]);
-      setPcnNumber('');
-      setDescription('');
-      setEffectiveDate('');
-      setDocLink('');
-      setShowForm(false);
+      let url = '/api/v1/alerts/?limit=100';
+      if (statusFilter !== 'ALL') {
+        url += `&status=${statusFilter}`;
+      }
+      if (severityFilter !== 'ALL') {
+        url += `&severity=${severityFilter}`;
+      }
+      const data = await apiRequest<Alert[]>(url, { token });
+      setAlerts(data);
     } catch (err: any) {
-      alert(err.message || 'Failed to create PCN');
+      console.error(err);
     } finally {
-      setAdding(false);
+      setLoading(false);
     }
   };
 
-  const getChangeTypeColor = (type: string) => {
-    const t = type.toLowerCase();
-    if (t.includes('end of life') || t.includes('eol')) return 'bg-red-500/10 text-red-400 border-red-500/20';
-    if (t.includes('material')) return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-    if (t.includes('site')) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-    return 'bg-slate-800 text-slate-400 border-slate-700';
+  const runEngine = async () => {
+    setRunning(true);
+    try {
+      await apiRequest('/api/v1/alerts/run', { method: 'POST', token });
+      await fetchAlerts();
+      // Force trigger an unread count update if we had a global state for it
+      window.dispatchEvent(new Event('alerts-updated'));
+    } catch (err: any) {
+      alert("Failed to run engine: " + err.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleAction = async (id: string, action: 'acknowledge' | 'resolve' | 'dismiss') => {
+    try {
+      await apiRequest(`/api/v1/alerts/${id}/${action}`, { method: 'POST', token });
+      // Remove or update locally
+      if (statusFilter === 'ACTIVE' && (action === 'resolve' || action === 'dismiss')) {
+        setAlerts(alerts.filter(a => a.id !== id));
+      } else {
+        setAlerts(alerts.map(a => a.id === id ? { ...a, status: action.toUpperCase() } : a));
+      }
+      window.dispatchEvent(new Event('alerts-updated'));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const getSeverityIcon = (sev: string) => {
+    switch (sev) {
+      case 'CRITICAL': return <ShieldAlert className="w-5 h-5 text-red-500" />;
+      case 'HIGH': return <AlertTriangle className="w-5 h-5 text-orange-500" />;
+      case 'WARNING': return <AlertCircle className="w-5 h-5 text-amber-500" />;
+      default: return <Info className="w-5 h-5 text-blue-500" />;
+    }
+  };
+
+  const getSeverityColor = (sev: string) => {
+    switch (sev) {
+      case 'CRITICAL': return 'bg-red-500/10 border-red-500/20 text-red-400';
+      case 'HIGH': return 'bg-orange-500/10 border-orange-500/20 text-orange-400';
+      case 'WARNING': return 'bg-amber-500/10 border-amber-500/20 text-amber-400';
+      default: return 'bg-blue-500/10 border-blue-500/20 text-blue-400';
+    }
+  };
+
+  const getCardBorder = (sev: string) => {
+    switch (sev) {
+      case 'CRITICAL': return 'border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]';
+      case 'HIGH': return 'border-orange-500/30';
+      case 'WARNING': return 'border-amber-500/30';
+      default: return 'border-slate-800';
+    }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Bell className="w-6 h-6 text-amber-400" />
-            PCN Alerts & Change Notifications
+    <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <Bell className="w-6 h-6 text-blue-500" />
+            Intelligent Alerts Hub
           </h1>
-          <p className="text-slate-400 text-sm">Track Product Change Notices, EOL announcements, and material change advisories.</p>
+          <p className="text-slate-400 text-sm mt-1">
+            Data-driven component and BOM risks detected by the alert engine.
+          </p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          New PCN
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={runEngine}
+            disabled={running}
+            className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 border border-slate-700"
+          >
+            <BrainCircuit className={`w-4 h-4 ${running ? 'animate-pulse text-blue-400' : 'text-blue-500'}`} />
+            {running ? 'Evaluating Rules...' : 'Run Alert Engine'}
+          </button>
+        </div>
       </div>
 
-      {/* Create PCN Form */}
-      {showForm && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-4 pb-2 border-b border-slate-800">
-            Register New PCN
-          </h3>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Affected Part *</label>
-              <select
-                value={partId}
-                onChange={(e) => setPartId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
-              >
-                {parts.map((p) => (
-                  <option key={p.id} value={p.id}>{p.part_number}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">PCN Number *</label>
-              <input
-                type="text"
-                required
-                value={pcnNumber}
-                onChange={(e) => setPcnNumber(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
-                placeholder="PCN-2026-001"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Change Type *</label>
-              <select
-                value={changeType}
-                onChange={(e) => setChangeType(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
-              >
-                <option value="End of Life">End of Life (EOL)</option>
-                <option value="Materials Change">Materials Change</option>
-                <option value="Manufacturing Site Change">Manufacturing Site Change</option>
-                <option value="Specification Change">Specification Change</option>
-                <option value="Packaging Change">Packaging Change</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Effective Date *</label>
-              <input
-                type="date"
-                required
-                value={effectiveDate}
-                onChange={(e) => setEffectiveDate(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500 resize-none"
-                placeholder="Brief summary of the change impact..."
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Document Link (optional)</label>
-              <input
-                type="url"
-                value={docLink}
-                onChange={(e) => setDocLink(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
-                placeholder="https://manufacturer.com/pcn/PCN-2026-001.pdf"
-              />
-            </div>
-            <div className="md:col-span-2 flex gap-2">
-              <button
-                type="submit"
-                disabled={adding}
-                className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs py-2 px-6 rounded-lg transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {adding ? 'Publishing...' : 'Publish PCN'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs py-2 px-6 rounded-lg transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
+      {/* Filters */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex flex-wrap gap-2">
+        <div className="flex bg-slate-950 rounded-lg p-1 border border-slate-800">
+          <button
+            onClick={() => setStatusFilter('ACTIVE')}
+            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${statusFilter === 'ACTIVE' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Active & Unread
+          </button>
+          <button
+            onClick={() => setStatusFilter('RESOLVED')}
+            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${statusFilter === 'RESOLVED' ? 'bg-slate-700 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Resolved
+          </button>
+          <button
+            onClick={() => setStatusFilter('ALL')}
+            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${statusFilter === 'ALL' ? 'bg-slate-700 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            All Alerts
+          </button>
         </div>
-      )}
 
-      {/* PCN Timeline */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-4 pb-2 border-b border-slate-800">
-          Change Notice Log ({pcns.length})
-        </h3>
+        <div className="flex bg-slate-950 rounded-lg p-1 border border-slate-800 ml-auto">
+          {['ALL', 'CRITICAL', 'HIGH', 'WARNING'].map(sev => (
+            <button
+              key={sev}
+              onClick={() => setSeverityFilter(sev)}
+              className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${severityFilter === sev ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              {sev === 'ALL' ? 'All Severities' : sev}
+            </button>
+          ))}
+        </div>
+      </div>
 
+      {/* Alert Feed */}
+      <div className="space-y-4">
         {loading ? (
-          <div className="text-slate-500 text-xs">Loading PCN records...</div>
-        ) : pcns.length === 0 ? (
-          <div className="text-slate-500 text-xs italic text-center py-8">
-            No Product Change Notices have been filed yet. Click "New PCN" to register one.
+          <div className="text-center py-12 text-slate-500">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            Loading intelligent alerts...
+          </div>
+        ) : alerts.length === 0 ? (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center flex flex-col items-center">
+            <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-4 opacity-50" />
+            <h3 className="text-lg font-bold text-white mb-2">No Active Alerts</h3>
+            <p className="text-slate-400 text-sm max-w-md">
+              Your BOMs and components are currently in good health based on the selected filters.
+            </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {pcns.map((pcn) => {
-              const partMatch = parts.find((p) => p.id === pcn.part_id);
-              return (
-                <div key={pcn.id} className="p-4 bg-slate-950 border border-slate-800 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-sm text-slate-200">{pcn.pcn_number}</span>
-                      <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded border ${getChangeTypeColor(pcn.change_type)}`}>
-                        {pcn.change_type}
-                      </span>
-                      <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded uppercase">
-                        {pcn.status}
-                      </span>
-                    </div>
-                    {pcn.description && (
-                      <p className="text-xs text-slate-400 leading-relaxed max-w-2xl">{pcn.description}</p>
-                    )}
-                    <div className="flex gap-x-4 text-[10px] text-slate-500">
-                      <span className="flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />
-                        Part: {partMatch ? (
-                          <Link to={`/parts/${partMatch.id}`} className="text-blue-500 hover:underline">{partMatch.part_number}</Link>
-                        ) : pcn.part_id}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        Effective: {new Date(pcn.effective_date).toLocaleDateString()}
-                      </span>
-                      <span>Filed: {new Date(pcn.created_at).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                  {pcn.document_link && (
-                    <a
-                      href={pcn.document_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1 text-xs text-blue-500 hover:underline shrink-0"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      View Document
-                    </a>
+          alerts.map(alert => (
+            <div key={alert.id} className={`bg-slate-900 border rounded-xl p-5 flex flex-col md:flex-row gap-5 transition-all hover:bg-slate-800/50 relative overflow-hidden ${getCardBorder(alert.severity)} ${alert.is_read ? 'opacity-80' : ''}`}>
+              {!alert.is_read && (
+                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
+              )}
+              
+              {/* Icon & Severity */}
+              <div className="shrink-0 pt-1">
+                {getSeverityIcon(alert.severity)}
+              </div>
+
+              {/* Content */}
+              <div className="flex-grow space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${getSeverityColor(alert.severity)}`}>
+                    {alert.severity}
+                  </span>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                    {alert.alert_type.replace(/_/g, ' ')}
+                  </span>
+                  <span className="text-[10px] text-slate-500 flex items-center gap-1 ml-auto">
+                    {new Date(alert.created_at).toLocaleString()}
+                  </span>
+                </div>
+                
+                <h3 className="text-sm font-bold text-white">{alert.title}</h3>
+                <p className="text-xs text-slate-400 leading-relaxed max-w-3xl">
+                  {alert.message}
+                </p>
+
+                {/* Badges for context */}
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {alert.part_id && (
+                    <Link to={`/parts/${alert.part_id}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-[10px] text-slate-300 hover:text-blue-400 hover:border-blue-500/30 transition-colors">
+                      <Search className="w-3 h-3 text-slate-500" />
+                      View Component Profile
+                    </Link>
+                  )}
+                  {alert.risk_score && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-[10px] text-slate-300">
+                      Risk Score: <strong className={alert.risk_score >= 90 ? 'text-red-400' : 'text-orange-400'}>{alert.risk_score}</strong>
+                    </span>
+                  )}
+                  {alert.pcn_id && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-[10px] text-slate-300">
+                      <FileText className="w-3 h-3 text-slate-500" />
+                      PCN Attached
+                    </span>
                   )}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+
+              {/* Actions */}
+              <div className="shrink-0 flex flex-row md:flex-col gap-2 justify-start border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-5">
+                {(alert.alert_type.includes('EOL') || alert.alert_type === 'HIGH_RISK' || alert.alert_type === 'REPLACEMENT_AVAILABLE') && alert.part_id && (
+                  <button
+                    onClick={() => navigate(`/replacements?part_id=${alert.part_id}`)}
+                    className="w-full bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Bot className="w-3.5 h-3.5" />
+                    Analyze with AI
+                  </button>
+                )}
+                
+                {alert.status === 'ACTIVE' && (
+                  <button
+                    onClick={() => handleAction(alert.id, 'acknowledge')}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-bold px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Acknowledge
+                  </button>
+                )}
+                
+                {(alert.status === 'ACTIVE' || alert.status === 'ACKNOWLEDGED') && (
+                  <button
+                    onClick={() => handleAction(alert.id, 'resolve')}
+                    className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Mark Resolved
+                  </button>
+                )}
+                
+                {alert.status !== 'DISMISSED' && (
+                  <button
+                    onClick={() => handleAction(alert.id, 'dismiss')}
+                    className="w-full text-slate-500 hover:text-slate-300 text-[10px] font-bold px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    <X className="w-3 h-3" /> Dismiss
+                  </button>
+                )}
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>

@@ -11,6 +11,8 @@ from app.models.models import (
     BOM, BOMItem, Part, PartManufacturer, PartSupplier, Supplier, 
     LifecycleInfo, ComplianceInfo, RiskAssessment, PCN, ReplacementCandidate
 )
+from app.models.lifecycle import PartIdentityLifecycle
+from app.config import settings
 from app.api.v1.deps import get_current_user
 
 router = APIRouter()
@@ -40,6 +42,12 @@ async def get_dashboard_overview(
     )
     parts = parts_res.scalars().all()
     total_components = len(parts)
+
+    # 2.5 Fetch verified PartIdentityLifecycle records
+    pil_res = await db.execute(select(PartIdentityLifecycle))
+    all_pil = pil_res.scalars().all()
+    verified_nexar_pil = [p for p in all_pil if p.provider == "nexar" and p.verification_status == "VERIFIED" and p.lookup_status == "SUCCESS"]
+    pil_by_ipn = {p.internal_part_number: p for p in verified_nexar_pil}
 
     # 3. Calculate lifecycle distribution
     lifecycle_distribution = {
@@ -169,8 +177,22 @@ async def get_dashboard_overview(
         issue = None
         priority = "Low"
 
-        # Determine issue and priority
-        if item.matched_part and item.matched_part.lifecycle_info and item.matched_part.lifecycle_info.lifecycle_status.upper() == "OBSOLETE":
+        # Determine issue, priority, and lifecycle with provenance
+        pil = pil_by_ipn.get(item.original_part_number)
+        if pil:
+            item_lifecycle = pil.lifecycle_status or "Unknown"
+            item_provenance = "nexar"
+            is_obsolete = bool(pil.is_obsolete or (pil.lifecycle_status and pil.lifecycle_status.upper() == "OBSOLETE"))
+        elif item.matched_part and item.matched_part.lifecycle_info:
+            item_lifecycle = item.matched_part.lifecycle_info.lifecycle_status or "Unknown"
+            item_provenance = item.matched_part.lifecycle_info.provider or "unresolved"
+            is_obsolete = bool(item_lifecycle and item_lifecycle.upper() == "OBSOLETE")
+        else:
+            item_lifecycle = "Unknown"
+            item_provenance = "unknown"
+            is_obsolete = False
+
+        if is_obsolete:
             issue = "Obsolete Part"
             priority = "Critical"
         elif item.matched_part and item.matched_part.lifecycle_info and item.matched_part.lifecycle_info.years_to_eol is not None and item.matched_part.lifecycle_info.years_to_eol <= 1.0:
@@ -198,7 +220,8 @@ async def get_dashboard_overview(
                 "issue": issue,
                 "risk_score": score,
                 "priority": priority,
-                "lifecycle": item.matched_part.lifecycle_info.lifecycle_status if (item.matched_part and item.matched_part.lifecycle_info) else "Unknown",
+                "lifecycle": item_lifecycle,
+                "provenance": item_provenance,
                 "bom_id": item.bom_id,
                 "bom_name": item.bom.name
             })
@@ -310,6 +333,12 @@ async def get_dashboard_overview(
             "obsolete_components": obsolete_count,
             "compliance_issues": compliance_issues_count,
             "total_boms": total_boms
+        },
+        "provenance": {
+            "verified_nexar_records": len(verified_nexar_pil),
+            "demo_catalog_records": sum(1 for p in parts if p.lifecycle_info and p.lifecycle_info.lifecycle_status),
+            "active_provider": settings.LIFECYCLE_PROVIDER,
+            "is_nexar_active": settings.LIFECYCLE_PROVIDER.lower() == "nexar",
         },
         "lifecycle_distribution": lifecycle_distribution,
         "risk_distribution": risk_distribution,
